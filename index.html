@@ -163,6 +163,7 @@ body{margin:0}
         <button type="button" class="btn" id="dlAll" disabled>목록 전체 PDF (0명)</button>
         <button type="button" class="btn" id="dlAllImg" disabled>목록 전체 이미지 (0명)</button>
       </div>
+      <button type="button" class="btn primary" id="shareNow" hidden></button>
       <div class="msg" id="msg" role="status"></div>
 
     </section>
@@ -381,6 +382,22 @@ async function saveFile(name, blob) {
   if (downloads) { await downloads.save({ filename: name, data: blob }); return; }
   // claude.ai 안인데 저장 기능을 못 받은 보기 화면(조직 밖 공개 링크 등): 가짜 '저장됨' 대신 안내
   if (window.claude?.use) throw { code: 'unavailable' };
+  // 휴대폰: 공유 시트로 넘겨서 '파일에 저장' / '이미지 저장'을 고를 수 있게
+  const mobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+  const type = name.endsWith('.pdf') ? 'application/pdf' : name.endsWith('.png') ? 'image/png' : 'application/zip';
+  const file = new File([blob], name, { type });
+  if (mobile && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return; }
+    catch (e) {
+      if (e && e.name === 'AbortError') throw { code: 'declined' };
+      // 파일 만드는 사이 탭 허용 시간이 지나면 한 번 더 눌러야 함
+      await new Promise((res, rej) => {
+        const btn = $('shareNow'); btn.hidden = false; $('msg').className = 'msg'; $('msg').textContent = '파일이 준비됐어요. 버튼을 눌러 저장하세요.'; btn.textContent = `${name} 저장하기`;
+        btn.onclick = async () => { btn.hidden = true; try { await navigator.share({ files: [file] }); res(); } catch (er) { rej(er && er.name === 'AbortError' ? { code: 'declined' } : er); } };
+      });
+      return;
+    }
+  }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
 }
 function saveError(e) {
