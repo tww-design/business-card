@@ -94,7 +94,7 @@ body{margin:0}
   <header>
     <div>
       <h1 data-copy="title">TWW Business Card</h1>
-      <p class="sub" data-copy="sub">정보를 입력하면 V261104 디자인에 맞춰 배치하고, 아웃라인 처리한 발주용 PDF와 이미지 명함 PNG를 만듭니다.</p>
+      <p class="sub" data-copy="sub">정보를 입력하면 V261104 디자인에 맞춰 배치하고, 아웃라인 처리한 발주용 PDF와 이미지 명함 JPG를 만듭니다.</p>
     </div>
     <div class="hdr-right">
     <div class="editbar" id="editbar" hidden>
@@ -130,7 +130,7 @@ body{margin:0}
       <div class="fields">
         <div class="field"><label for="phone" data-copy="label-phone">휴대폰</label><input id="phone" class="mono" inputmode="tel"></div>
         <div class="field"><label for="floor" data-copy="label-floor">근무 층</label>
-          <select id="floor"><option value="1">1층</option><option value="2">2층</option><option value="1,2">1,2층</option><option value="1,2,5">1,2,5층</option><option value="5">5층</option></select></div>
+          <select id="floor"><option value="1">1층</option><option value="2">2층</option><option value="1,2">1,2층</option></select></div>
         <div class="field full"><label for="email" data-copy="label-email">이메일</label>
           <div class="email"><input id="email" class="mono" spellcheck="false"><span>@twwtherapy.com</span></div></div>
       </div>
@@ -205,7 +205,7 @@ const STY = {
 };
 const DOMAIN = '@twwtherapy.com';
 const SAMPLE = { layout: 'member', krName: '이다능', enName: 'Lee Daneung', krDept: '비주얼디자인팀', krTitle: '책임',
-  enDept: 'Visual Design Team', enTitle: 'Senior Manager', phone: '010-0000-0000', floor: '5', email: 'ldn' };
+  enDept: 'Visual Design Team', enTitle: 'Senior Manager', phone: '010-0000-0000', floor: '2', email: 'ldn' };
 
 const $ = id => document.getElementById(id);
 const fields = ['krName','enName','krDept','krTitle','enDept','enTitle','phone','floor','email'];
@@ -384,7 +384,7 @@ async function saveFile(name, blob) {
   if (window.claude?.use) throw { code: 'unavailable' };
   // 휴대폰: 공유 시트로 넘겨서 '파일에 저장' / '이미지 저장'을 고를 수 있게
   const mobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
-  const type = name.endsWith('.pdf') ? 'application/pdf' : name.endsWith('.png') ? 'image/png' : 'application/zip';
+  const type = name.endsWith('.pdf') ? 'application/pdf' : name.endsWith('.jpg') ? 'image/jpeg' : 'application/zip';
   const file = new File([blob], name, { type });
   if (mobile && navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file] }); return; }
@@ -413,17 +413,23 @@ async function buildImage(p) {
   ctx.setTransform(k, 0, 0, k, -FRONT.x * k, -FRONT.y * k);
   ctx.fillStyle = INK;
   const d = layout(p).d; if (d) ctx.fill(new Path2D(d));
-  return await new Promise(res => cv.toBlob(res, 'image/png'));
+  const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.95));
+  // JFIF 해상도를 300dpi로 기록 (포토샵 등에서 90×50mm로 열리도록)
+  const u8 = new Uint8Array(await blob.arrayBuffer());
+  if (u8[2] === 0xFF && u8[3] === 0xE0 && String.fromCharCode(...u8.slice(6, 10)) === 'JFIF') {
+    u8[13] = 1; u8[14] = IMG_DPI >> 8; u8[15] = IMG_DPI & 255; u8[16] = IMG_DPI >> 8; u8[17] = IMG_DPI & 255;
+  }
+  return new Blob([u8], { type: 'image/jpeg' });
 }
 async function offerImage(p) {
   const msg = $('msg'); msg.className = 'msg'; msg.textContent = '이미지 만드는 중…';
-  try { const name = `명함IMG_${p.krName || '이름없음'}.png`; await saveFile(name, await buildImage(p)); msg.textContent = `${name} 저장됨`; }
+  try { const name = `명함IMG_${p.krName || '이름없음'}.jpg`; await saveFile(name, await buildImage(p)); msg.textContent = `${name} 저장됨`; }
   catch (e) { saveError(e); }
 }
 window.__buildImage = p => buildImage(p || state);
 const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
-// minimal stored (uncompressed) zip with UTF-8 names — PNGs are already compressed
+// minimal stored (uncompressed) zip with UTF-8 names — JPGs are already compressed
 function makeZip(files) {
   const enc = new TextEncoder(), parts = [], central = []; let off = 0;
   const d = new Date(), time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
@@ -450,7 +456,7 @@ async function offerImages(list) {
     const seen = {}, files = [];
     for (const p of list) {
       const base = `명함IMG_${p.krName || '이름없음'}`; seen[base] = (seen[base] || 0) + 1;
-      const name = seen[base] > 1 ? `${base}_${seen[base]}.png` : `${base}.png`;
+      const name = seen[base] > 1 ? `${base}_${seen[base]}.jpg` : `${base}.jpg`;
       files.push({ name, data: new Uint8Array(await (await buildImage(p)).arrayBuffer()) });
     }
     const zname = `명함IMG_${list.length}명_${ymd()}.zip`;
@@ -474,6 +480,7 @@ window.__buildPdf = list => buildPdf(list || [state]);
 
 /* ---------- form wiring ---------- */
 function fillForm() {
+  if (![...$('floor').options].some(o => o.value === state.floor)) state.floor = '2';
   fields.forEach(k => { $(k).value = state[k] ?? ''; });
   $('lay-member').setAttribute('aria-pressed', state.layout !== 'exec');
   $('lay-exec').setAttribute('aria-pressed', state.layout === 'exec');
@@ -489,7 +496,7 @@ $('lay-member').onclick = () => { state.layout = 'member'; fillForm(); onChange(
 $('lay-exec').onclick = () => { state.layout = 'exec'; fillForm(); onChange(); };
 ['card', 'sheet', 'image'].forEach(v => $('view-' + v).onclick = () => {
   view = v; ['card', 'sheet', 'image'].forEach(o => $('view-' + o).setAttribute('aria-pressed', o === v)); render(); });
-$('resetForm').onclick = () => { active = null; renderQueue(); state = { layout: state.layout, krName:'', enName:'', krDept:'', krTitle:'', enDept:'', enTitle:'', phone:'', floor: state.floor || '5', email:'' }; fillForm(); onChange(); $('krName').focus(); };
+$('resetForm').onclick = () => { active = null; renderQueue(); state = { layout: state.layout, krName:'', enName:'', krDept:'', krTitle:'', enDept:'', enTitle:'', phone:'', floor: state.floor || '2', email:'' }; fillForm(); onChange(); $('krName').focus(); };
 function renderQueue() {
   if (active !== null && !queue[active]) active = null;
   $('queue').innerHTML = queue.map((p, i) => `<li class="${i === active ? 'active' : ''}"><button type="button" class="who" data-act="load" data-i="${i}" title="불러오기">${esc(p.krName || '이름없음')} <small>${esc(p.layout === 'exec' ? p.krTitle : `${p.krDept} ${p.krTitle}`)}</small></button><button type="button" class="act" data-act="pdf" data-i="${i}">PDF</button><button type="button" class="act" data-act="img" data-i="${i}">이미지</button><button type="button" class="act del" data-act="del" data-i="${i}" aria-label="목록에서 빼기">빼기</button></li>`).join('');
